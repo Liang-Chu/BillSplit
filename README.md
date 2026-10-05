@@ -6,6 +6,7 @@ Internal expense management and bill-splitting backend: FastAPI, SQLite, RapidOC
 - [Frontend handout](docs/frontend-handout.md): start here if you're building the UI
 - [API design](docs/api.md): REST contract (the live OpenAPI schema at `/api/v1/openapi.json` is authoritative)
 - [Design document](docs/design.md): architecture, data model, decisions
+- [Operations (Chinese)](docs/operations.md): starting/stopping the test server, logs, troubleshooting
 
 ## Run locally
 
@@ -23,8 +24,17 @@ cp .env.example .env            # set JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD
 
 Tests: `.venv/bin/pytest`
 
-Manual background start/stop (testing): `scripts/start.sh` / `scripts/stop.sh` (log in `data/server.log`).
-To listen only on this machine's Tailscale IP (when Tailscale Serve isn't enabled): `HOST=$(tailscale ip -4) scripts/start.sh`.
+## Start / stop (test server)
+
+Full guide (Chinese): [docs/operations.md](docs/operations.md)
+
+```bash
+HOST=$(tailscale ip -4) scripts/start.sh   # start in background, reachable from the tailnet
+scripts/stop.sh                            # stop
+tail -f data/server.log                    # logs
+```
+
+Without `HOST`, it listens on `127.0.0.1` only.
 
 ## Deploy (small EC2 + Tailscale)
 
