@@ -10,7 +10,7 @@
 ### 1.1 Transport
 - JSON requests and responses (`Content-Type: application/json`). File uploads use `multipart/form-data`. Exports return `application/zip`.
 - Field names are `snake_case`.
-- IDs are opaque strings (UUIDv7). Do not parse them.
+- IDs are opaque strings (UUIDv7, e.g. `01a109c5-f957-7071-8b1a-daa323f9476f`). Do not parse them. Examples in this doc use short placeholders like `u_..` or `g_..` for readability.
 
 ### 1.2 Auth
 - `Authorization: Bearer <access_token>` on every endpoint except those marked **public**.
@@ -91,9 +91,11 @@ Every error response has this shape:
   "member_count": 4,
   "current_period": { "id": "p_..", "starts_on": "2026-10-01", "ends_on": "2026-10-31", "status": "open" },
   "join_enabled": true,
+  "default_expense_type_id": "t_..",
   "archived_at": null, "created_at": "..."
 }
 ```
+- `default_expense_type_id` is **the caller's own** default type for this group. Picking this group pre-selects that type; the user can still change it. Set it with `PUT /groups/{id}/my-settings`. Seeded groups default to the type of the same name.
 - `recurrence` is `null` when `is_recurring` is false.
 - `cadence` is one of `monthly`, `weekly`, or `every_n_days` (uses `cadence_n`).
 - `anchor_day` is the day of the month (1–28) for monthly, the weekday (1=Mon … 7=Sun) for weekly, or ignored for `every_n_days` (the anchor is the first period's start).
@@ -228,7 +230,9 @@ Legend: 🔓 public · 👤 any logged-in user · 👥 group member · 🛡 grou
   "totals": [ { "currency": "CAD", "i_owe": 4200, "owed_to_me": 9100, "net": 4900 } ],
   "groups": [
     { "group_id": "g_..", "group_name": "Livexpense", "currency": "CAD",
+      "is_member": true,
       "periods": [ { "period_id": "p_..", "label": "2026-09", "status": "frozen",
+                     "starts_on": "2026-09-01", "ends_on": "2026-09-30",
                      "i_owe": 0, "owed_to_me": 9100, "net": 9100 } ] }
   ]
 }
@@ -255,6 +259,7 @@ Only periods with a non-zero outstanding amount for me, plus the current open pe
 | DELETE | `/groups/{id}` | 👑 | Archive (soft). Not allowed for the default group |
 | POST | `/groups/{id}/unarchive` | 👑 | |
 | POST | `/groups/{id}/transfer-ownership` | 👑 | `{user_id}` (must be a registered member) |
+| PUT | `/groups/{id}/my-settings` | 👥 | `{default_expense_type_id}`: my default type for this group (my own type, or `null`) → `Group` |
 | GET | `/groups/{id}/join-code` | 🛡 | → `{ "join_code": "LIVE-7K2Q9M", "join_enabled": true }` |
 | POST | `/groups/{id}/join-code/regenerate` | 🛡 | New code; the old one stops working |
 | POST | `/groups/join` | 👤 | `{join_code, claim_placeholder_id?}`. Existing user joins. A claim **merges** the placeholder into the caller |
@@ -282,7 +287,7 @@ For a recurring group the first period starts at the most recent anchor on or be
 |---|---|---|---|
 | GET | `/groups/{id}/periods` | 👥 | Newest first, paginated |
 | GET | `/periods/{id}` | 👥 | Period + member snapshot |
-| POST | `/groups/{id}/periods/cut` | 🛡 | End the current period now. It goes to `grace`, and a new `open` period starts today |
+| POST | `/groups/{id}/periods/cut` | 🛡 | `{ends_on?}` (default: today in the group's timezone). The current period ends on that date (inclusive) and goes to `grace`. A new `open` period starts the next day → the new `Period` |
 | GET | `/periods/{id}/balances` | 👥 | Balances (live) + snapshot (if frozen) |
 | GET | `/groups/{id}/balances` | 👥 | Shortcut: balances for the current period |
 
@@ -340,15 +345,22 @@ For a recurring group the first period starts at the most recent anchor on or be
 | POST | `/expenses/{id}/attachments` | 👥 | `{attachment_ids: [...]}` link uploaded files (allowed in frozen periods) |
 | DELETE | `/expenses/{id}/attachments/{aid}` | creator / payer / owner / uploader | Unlink |
 
-**`POST /expenses/resolve`**
+**`POST /expenses/resolve`**: the result is a **suggestion**. The user can always override the type and group before saving.
 ```json
-{ "merchant": "COSTCO WHOLESALE #123", "title": null, "expense_type_id": null }
+{ "merchant": "COSTCO WHOLESALE #123", "title": null, "expense_type_id": null, "group_id": null }
 ```
 →
 ```json
 { "expense_type_id": "t_..", "group_id": "g_..", "routing_id": "r_..",
-  "source": "rule|type|default", "matched_rule_id": "ar_.." }
+  "source": "rule|type|group_default|manual|default", "matched_rule_id": "ar_.." }
 ```
+Resolution order:
+1. **`group_id` sent** (the user picked the group by hand): keep it. If no type was sent, use my default type for that group (`source: group_default`). Auto-rules are skipped.
+2. **`expense_type_id` sent**: type → routing → group (`source: type`).
+3. **Neither sent**: the first matching auto-rule on merchant/title sets the type and/or group (`source: rule`). A rule that sets only a type continues through type → routing → group.
+4. Fallback: my default group and its default type (`source: default`).
+
+Call it when merchant or type changes. Send `group_id` only when the user picked the group by hand.
 
 **`POST /expenses`**
 ```json
@@ -385,7 +397,10 @@ For a recurring group the first period starts at the most recent anchor on or be
 | `itemized` | — (use `items`) | |
 
 - `itemized`: `items: [{ "name": "Milk", "amount": 599, "participant_ids": ["u_a","u_b"] }]`. Requires `Σ items.amount ≤ amount`. The difference (tax/tip) is spread proportionally to each person's item subtotal. Items with `participant_ids: []` are split among all participants. Item participants must also be in `participants`.
-- `period_id` is **derived** from `expense_date`. If that date falls in a frozen period you get `409 period_frozen`.
+- `period_id` is **derived** from `expense_date`:
+  - The date falls in a frozen period → `409 period_frozen`.
+  - The date is before the group's first period → it goes into the first period (handy for back-filling).
+  - The date is after the current open period ends (a future period) → `400 validation_error` on `expense_date`.
 - Returns `201 { Expense }`.
 
 **`POST /expenses/preview-split`**: the same body as create (only `amount`, `split_method`, `participants`, `items`, and `payer_id` matter) → `{ "shares": [ { "user_id", "amount" } ] }`. Use it to show live per-person amounts as the user edits.
@@ -444,7 +459,7 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
 
 ### 3.10 OCR
 
-**`POST /ocr/receipt`** 👤: `multipart/form-data` with `file` (image or PDF) and optional `keep=true`.
+**`POST /ocr/receipt`** 👤: `multipart/form-data` with `file` (image or PDF). Optional `keep=true`, sent either as a form field or as a query param (`/ocr/receipt?keep=true`).
 ```json
 {
   "merchant": "COSTCO WHOLESALE",
@@ -469,6 +484,7 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
 ```
 - `group_ids` omitted means all my groups.
 - Rows are bills where the caller is the payer or a participant.
+- **Several groups go into one workbook.** Sheets: `Summary` (per group and period, plus per-currency totals), `Expenses` (one sheet for all groups, with a Group column and auto-filter), `Line Items` (only if itemized bills exist), and `Payments`.
 - Response: `200 application/zip`, `Content-Disposition: attachment; filename="billsplit-export-2026-09-01_2026-09-30.zip"`. The ZIP contains `expenses.xlsx` and `attachments/`.
 - It is synchronous. Use a long request timeout (≈ 60 s) and show a spinner.
 
@@ -504,3 +520,4 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
 
 ## 5. Changelog
 - v1 (2026-10-05): initial.
+- v1.1 (2026-10-05, implemented): per-user default expense type per group (`default_expense_type_id`, `PUT /groups/{id}/my-settings`), `group_id` input on `/expenses/resolve`, `ends_on` on period cut, explicit date→period rules, `keep` as query param on OCR, multi-group export layout.

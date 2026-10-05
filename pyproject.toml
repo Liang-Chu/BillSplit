@@ -1,0 +1,37 @@
+[project]
+name = "billsplit"
+version = "0.1.0"
+description = "Internal expense management & bill-splitting backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.140",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "pydantic-settings>=2.4",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.9",
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1",
+    "pillow>=10.4",
+    "pillow-heif>=0.18",
+    "pypdfium2>=4.30",
+    "boto3>=1.34",
+    "rapidocr>=3.0",
+    "onnxruntime>=1.18",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

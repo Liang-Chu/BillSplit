@@ -5,6 +5,24 @@
 
 ---
 
+## 0. Connecting to the backend
+
+The backend and frontend run on the same **Tailscale** network (tailnet). The backend is published inside the tailnet with `tailscale serve`, so it gets HTTPS and a stable MagicDNS name. It is not reachable from the public internet.
+
+| Item | Value |
+|---|---|
+| API base URL | `https://<backend-host>.<tailnet>.ts.net/api/v1` (ask the owner for the exact host; put it in an env var such as `VITE_API_BASE_URL`, never hard-code it) |
+| Swagger UI | `https://<backend-host>.<tailnet>.ts.net/docs` (try every endpoint in the browser) |
+| OpenAPI JSON | `https://<backend-host>.<tailnet>.ts.net/api/v1/openapi.json` (generate a typed client from it if you like, e.g. `openapi-typescript`) |
+| Health check | `GET /api/v1/health` (no auth) |
+| Local dev backend | `http://localhost:8000/api/v1` (see the README: `uvicorn app.main:app --reload`) |
+
+- **CORS**: the backend allows the origins in its `CORS_ORIGINS` setting. During development it is `["*"]`. For production, tell the owner your frontend origin (e.g. `https://<frontend-host>.<tailnet>.ts.net`). Auth uses a Bearer header, not cookies, so no credentials mode is needed.
+- **Every device that opens the app must be on the tailnet** (phones too, via the Tailscale app), because the browser calls the API directly. The alternative is a frontend server that proxies `/api` to the backend; then only that server needs to reach the API, but the users still reach the frontend over the tailnet.
+- HTTPS from `tailscale serve` also makes PWA install and camera access work on phones.
+
+---
+
 ## 1. What we're building
 
 An **internal** expense-tracking and bill-splitting app for a small set of people (roommates, family, a few coworkers). It replaces a Splitwise workflow where the users created a **new group every month**. Here one group rolls over automatically each month.
@@ -23,7 +41,7 @@ An **internal** expense-tracking and bill-splitting app for a small set of peopl
 | **Group** | A set of people sharing bills. Every bill lives in exactly one group. Each group has one currency. |
 | **Default group ("Personal")** | Just me. It can't be deleted. My private expenses go here. |
 | **Only-me groups** | Any group with just me. New users start with three: **Personal**, **Life Expense**, **Reimbursement**. |
-| **Expense type** | My own categories (e.g. "Groceries"). Each type points to a **routing**. |
+| **Expense type** | My own categories (e.g. "Groceries"). Each type points to a **routing**. Each group can also have **my default type** (`group.default_expense_type_id`): picking that group pre-selects the type. Types don't drive much yet beyond labeling and routing. |
 | **Routing** | My own "where does this go" switch. Example: routing "Life Expense" → group "Livexpense". Changing the routing's group moves all its types at once. |
 | **Auto-rule** | "If the store name contains COSTCO → type Groceries (and/or group X)". Saves the user picking anything. |
 | **Recurring group & periods** | A group can cut off every month (or week). Each month is a **period**. At month end there is a **grace window** (default 3 days) where last month's bills can still be added or edited. Then the period is **frozen**: amounts are locked, a snapshot of who owes whom is saved, and the new month starts at **$0**. Old months stay browsable and payable. |
@@ -57,8 +75,8 @@ An **internal** expense-tracking and bill-splitting app for a small set of peopl
 Order of fields, optimized for speed:
 1. **Receipt** (optional): camera or file. Upload via `POST /ocr/receipt?keep=true` → pre-fill merchant, total, date, type, and group. Show a subtle "auto-filled, please check" hint and low-confidence fields highlighted (confidence < 0.6). OCR may fail or be busy (`429`). Then just keep the attachment (upload via `POST /attachments`) and let the user type.
 2. **Amount** (big input) and **Title** / **Merchant**.
-3. **Type** (my types). Changing the type or merchant calls `POST /expenses/resolve` and **auto-selects the group** unless the user already picked a group manually.
-4. **Group**. Defaults from resolve. Shows the currency.
+3. **Type** (my types). Changing the type or merchant calls `POST /expenses/resolve` and **auto-selects the group** unless the user already picked a group manually. Example: a rule "HEB → Life Expense" makes Life Expense the *default choice*, and the user can still pick something else.
+4. **Group**. Defaults from resolve. Shows the currency. When the user picks a group by hand and hasn't chosen a type, call resolve with `group_id` (or read `group.default_expense_type_id`) to pre-select that group's default type.
 5. **Date**. Defaults to today. If the group is recurring and the date falls in a frozen period, show the error inline (`409 period_frozen`). Tell the user to date it in the current period instead.
 6. **Paid by**. Defaults to me. Picker from group members + current participants.
 7. **Split with**: a checklist pre-filled with **all current group members** (from `GET /groups/{id}/members`). The user can untick people, **＋ Add someone** (search `GET /people`), or create a new person by name (`POST /placeholders`, no `group_id`, so they become a guest). Mark guests visibly.
@@ -94,6 +112,7 @@ Edit uses the same screen (`PATCH`). Respect `expense.permissions.can_edit`. If 
 ### 3.7 My setup (Types, Routings, Rules)
 - **Routings**: name → group dropdown. This is the main control for "where does Life Expense go now?"
 - **Types**: name, icon, color, routing.
+- **Per-group default type**: on each group's settings (for me), choose a default type (`PUT /groups/{id}/my-settings`).
 - **Auto-rules**: an ordered, drag-to-reorder list (`PUT /auto-rules/order`). The editor has: field (store name/title), mode (contains/equals/regex), pattern, and set type and/or set group. Include a **"Test"** box calling `POST /auto-rules/test`.
 
 ### 3.8 Export

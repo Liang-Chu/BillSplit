@@ -1,6 +1,6 @@
 # BillSplit Backend — Design Document
 
-> Status: **v1.1 — confirmed by owner.** Companion docs: [`api.md`](api.md), [`frontend-handout.md`](frontend-handout.md).
+> Status: **v1.2 — implemented** (backend v0.1.0). Companion docs: [`api.md`](api.md), [`frontend-handout.md`](frontend-handout.md).
 > Last updated: 2026-10-05
 
 ---
@@ -130,6 +130,7 @@ bob:   Food      ───► routing "Home" ──► group "Livexpense"
 ```
 
 - `routing.group_id` is nullable. An unmapped routing resolves to the user's default group.
+- **Per-group default type** (`user_group_settings`): each user can pick one of their types as the default for a group. Choosing the group by hand pre-selects that type. This is the reverse direction of type → routing → group.
 - **Seed for every new user** (registration or placeholder convert). Three only-me groups, each with a routing and a type of the same name pointing to it:
 
   | Group (only-me) | Routing | Expense type | Notes |
@@ -290,6 +291,7 @@ period_transfers(id PK, period_id FK, from_user_id, to_user_id, amount)
 routings(id PK, user_id FK, name, group_id FK NULL, archived_at NULL, UNIQUE(user_id,name))
 expense_types(id PK, user_id FK, name, routing_id FK, icon NULL, color NULL, archived_at NULL,
               UNIQUE(user_id,name))
+user_group_settings(user_id FK, group_id FK, default_expense_type_id FK NULL, PK(user_id,group_id))
 auto_rules(id PK, user_id FK, priority, field CHECK(field IN ('merchant','title')),
            mode CHECK(mode IN ('contains','equals','regex')), pattern,
            set_type_id FK NULL, set_group_id FK NULL, enabled BOOL)
@@ -378,3 +380,8 @@ BillSplit/
 | 23 | R2 re-sync | Delete the local copy after a successful sync |
 | 24 | Frozen-period bills | Rejected (no unfreeze) |
 | 25 | Admins editing others' bills | Not allowed (creator, payer, owner only) |
+| 26 | Per-group default type | Each user can set a default expense type per group; picking the group pre-selects it (still overridable). Seeded groups default to the same-named type |
+| 27 | Auto-rule results | Always a suggestion; the user can override type and group before saving |
+| 28 | Export of several groups | One workbook: a single Expenses sheet with a Group column + per-group/period Summary |
+| 29 | Bills dated before a group's first period | Go into the first period. Bills dated after the open period are rejected |
+| 30 | Deployment network | Backend reachable only inside the Tailscale tailnet (`tailscale serve`) |
