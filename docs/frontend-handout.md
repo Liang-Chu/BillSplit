@@ -9,6 +9,8 @@
 
 The backend and frontend run on the same **Tailscale** network (tailnet). The backend is published inside the tailnet with `tailscale serve`, so it gets HTTPS and a stable MagicDNS name. It is not reachable from the public internet.
 
+**Current test backend (running now):** `http://nuc.tailcfa4ec.ts.net:8000/api/v1`. Swagger: `http://nuc.tailcfa4ec.ts.net:8000/docs`. Test login: `admin` / `password`. It's plain HTTP inside the tailnet (WireGuard-encrypted) and runs on the owner's NUC, started manually, so it may be offline. Check `GET /api/v1/health`. The production values below apply once it moves to its final server.
+
 | Item | Value |
 |---|---|
 | API base URL | `https://<backend-host>.<tailnet>.ts.net/api/v1` (ask the owner for the exact host; put it in an env var such as `VITE_API_BASE_URL`, never hard-code it) |

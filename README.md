@@ -23,6 +23,9 @@ cp .env.example .env            # set JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD
 
 Tests: `.venv/bin/pytest`
 
+Manual background start/stop (testing): `scripts/start.sh` / `scripts/stop.sh` (log in `data/server.log`).
+To listen only on this machine's Tailscale IP (when Tailscale Serve isn't enabled): `HOST=$(tailscale ip -4) scripts/start.sh`.
+
 ## Deploy (small EC2 + Tailscale)
 
 Target: 2 GB RAM (e.g. `t4g.small`). The process uses about 360 MB with the OCR model loaded.
