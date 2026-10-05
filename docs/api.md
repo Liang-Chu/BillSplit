@@ -580,6 +580,7 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
 
 ## 5. Changelog
 - v1 (2026-10-05): initial.
+- backend 0.2.3: fix: an OCR job that outlives its caller's timeout keeps its queue slot until it really finishes, so `OCR_MAX_CONCURRENCY + OCR_MAX_QUEUE` is enforced (extra requests get `429 ocr_busy`). No API change.
 - v1.4 (backend 0.2.2): OCR merchant filtering and scoring, `merchant: null` when no credible store name, header retry for long photos, optional debug fields `merchant_source`, `merchant_candidates`, `header_lines`.
 - v1.3 (backend 0.2.1): new users get only the Personal group (no more Life Expense / Reimbursement).
 - v1.2 (backend 0.2.0): personal group order (`GET/PUT /me/group-order`, `Me.preferred_group_id`), `GET /groups` in that order, resolve/OCR fallback = preferred group, new error `group_order_conflict`. Transferring ownership to yourself is now a no-op (it used to demote the owner).

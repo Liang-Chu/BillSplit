@@ -424,21 +424,38 @@ class OCREngine:
             if self._pending >= s.ocr_max_concurrency + s.ocr_max_queue:
                 raise APIError(429, "ocr_busy", "OCR is busy; try again shortly")
             self._pending += 1
+        # The slot belongs to the job, not to this caller: it is released when the job finishes or is
+        # cancelled while still queued — never just because the caller stopped waiting. A timed-out job
+        # that is already running keeps its slot until it really ends.
         try:
             future = self._executor.submit(self._run, data, mime)
-            try:
-                fields = future.result(timeout=s.ocr_timeout_seconds)
-            except FutureTimeout:
-                raise APIError(422, "ocr_failed", "OCR timed out")
-            except APIError:
-                raise
-            except Exception:
-                log.exception("OCR failed")
-                raise APIError(422, "ocr_failed", "Could not read the receipt")
-        finally:
-            with self._pending_lock:
-                self._pending -= 1
-        return fields
+        except Exception:
+            self._release()
+            log.exception("OCR submit failed")
+            raise APIError(422, "ocr_failed", "Could not start OCR")
+        future.add_done_callback(lambda _f: self._release())  # runs exactly once (done or cancelled)
+        try:
+            return future.result(timeout=s.ocr_timeout_seconds)
+        except FutureTimeout:
+            future.cancel()  # frees the slot now if the job hadn't started yet
+            raise APIError(422, "ocr_failed", "OCR timed out")
+        except APIError:
+            raise
+        except Exception:
+            log.exception("OCR failed")
+            raise APIError(422, "ocr_failed", "Could not read the receipt")
+
+    def _release(self) -> None:
+        with self._pending_lock:
+            if self._pending <= 0:
+                log.error("OCR slot counter would go negative; ignoring extra release")
+                return
+            self._pending -= 1
+
+    @property
+    def pending(self) -> int:
+        with self._pending_lock:
+            return self._pending
 
 
 _engine: OCREngine | None = None
