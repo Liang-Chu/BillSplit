@@ -5,6 +5,7 @@ Best effort only — results pre-fill a form the user confirms."""
 import logging
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
@@ -82,10 +83,15 @@ _TOTAL_EXCLUDE = re.compile(
     r"ITEMS?\s*SOLD|TOTAL\s*ITEMS|小\s*计|小\s*計|找\s*零|税|稅|优惠|折扣)",
     re.IGNORECASE,
 )
-_PHONE = re.compile(r"(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})|(TEL|PHONE|电话|電話)", re.IGNORECASE)
-_URL = re.compile(r"(www\.|https?://|\.com\b|@)", re.IGNORECASE)
+_PHONE = re.compile(r"(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})|\b(TEL|PHONE|FAX)\b|电话|電話", re.IGNORECASE)
+_URL = re.compile(r"(www\.|https?://|\.(com|net|org|ca)\b|@)", re.IGNORECASE)
+# An address needs a house number or a postcode next to a street/city word; a street word alone
+# ("Market Street", "永辉超市") is not enough.
 _ADDRESS = re.compile(
-    r"^\d+\s+\w+|\b(ST|STREET|AVE|AVENUE|RD|ROAD|BLVD|DR|DRIVE|HWY|SUITE|STE|UNIT|LN|PKWY|WAY)\b\.?|路|街|号|號|区|區|市",
+    r"^\s*\d+[A-Za-z]?\s+\w+.*\b(ST|STREET|AVE|AVENUE|RD|ROAD|BLVD|DR|DRIVE|HWY|HIGHWAY|SUITE|STE|UNIT|LN|LANE|PKWY|WAY|CT|PL|PLAZA|CIR)\b\.?"
+    r"|\b[A-Z]{2}\s+\d{5}(-\d{4})?\b"  # "Austin, TX 78701"
+    r"|\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b"  # Canadian postcode
+    r"|\d+\s*(号|號|弄|室|楼|樓)|(路|街|大道)\s*\d+",
     re.IGNORECASE,
 )
 _DATE_PATTERNS = [
@@ -140,20 +146,133 @@ def extract_total(rows: list[Row]) -> tuple[int | None, float]:
     return None, 0.0
 
 
+# ---------------------------------------------------------------- merchant
+
+MERCHANT_WINDOW = 8  # header rows considered; never scans into the item table
+MERCHANT_MIN_SCORE = 0.55
+
+# Labels that introduce an id/number/person rather than the store name. Matched only at the start of
+# a line and only when followed by a number or a colon, so brands like "Member's Mark" or
+# "COSTCO WHOLESALE #123" are not affected.
+_LABELS = (
+    r"customer|cust|member|mbr|acct|account|card|cashier|clerk|server|operator|oper|associate|host|"
+    r"terminal|term|register|reg|lane|till|pos|station|wks|"
+    r"invoice|inv|receipt|rcpt|order|ord|transaction|trans|tran|txn|trx|ref|reference|auth|approval|appr|"
+    r"seq|sequence|ticket|tkt|table|tbl|check|chk|guest|batch|trace|store\s*(?:no|id)|st|tr|"
+    r"收银员?|收銀員?|收款员|收款員|店员|店員|会员|會員|卡号|卡號|单号|單號|订单号?|訂單號?|流水号?|流水號?|"
+    r"交易号?|交易號?|发票号?|發票號?|票号|票號|终端号?|終端號?|机号|機號|台号|台號|桌号|桌號|顾客|顧客|"
+    r"客户|客戶|工号|工號|编号|編號"
+)
+_ID_LINE = re.compile(
+    rf"^\s*(?:{_LABELS})(?![A-Za-z])\s*(?:#|no\.?|num(?:ber)?|id)?\s*[:：#.]?\s*[\w\-/]*\d", re.IGNORECASE
+)
+_LABEL_COLON = re.compile(rf"^\s*(?:{_LABELS})(?![A-Za-z])\s*(?:#|no\.?|id)?\s*[:：]", re.IGNORECASE)
+_TIME_ONLY = re.compile(r"^\s*\d{1,2}[:：]\d{2}([:：]\d{2})?\s*([ap]\.?\s?m\.?)?\s*$", re.IGNORECASE)
+_PAYMENT = re.compile(
+    r"^\s*(visa|master\s*card|amex|american\s+express|discover|debit|credit|cash|ebt|chip|contactless|"
+    r"apple\s*pay|google\s*pay|interac|支付宝|支付寶|微信支付?|银联|銀聯|现金|現金|刷卡)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_TITLE = re.compile(
+    r"^\s*(sales\s+)?(receipt|invoice|tax\s+invoice|order\s+summary|order\s+details|bill|statement|"
+    r"(customer|merchant)\s+copy|duplicate(\s+copy)?|copy|reprint|thank\s+you.*|welcome|"
+    r"收据|收據|小票|购物小票|購物小票|发票|發票|欢迎光临|歡迎光臨|谢谢惠顾|謝謝惠顧)\W*$",
+    re.IGNORECASE,
+)
+# "Key: value" lines (Sales Person: PATTY, 收银员：张三). Store names practically never contain a colon.
+_KEY_VALUE = re.compile(r"^\s*[^:：]{1,24}[:：]\s*\S")
+# Column/section headings of online orders and invoices, anywhere in the line.
+_SECTION = re.compile(
+    r"order\s+(summary|details|placed|number)|payment\s+(method|info)|ship(ping)?\s+(to|address|method)|"
+    r"bill(ing)?\s+(to|address)|sold\s+to|deliver(y|ed)?\s+to|items?\s+ordered|"
+    r"sales\s*(person|associate|rep)|收货地址|收貨地址|付款方式|支付方式|配送方式|订单详情|訂單詳情",
+    re.IGNORECASE,
+)
+_WELCOME_PREFIX = re.compile(r"^\s*(welcome\s+to|欢迎光临|歡迎光臨)\s*", re.IGNORECASE)
+_CJK = re.compile(r"[㐀-鿿豈-﫿]")
+
+
+def _reject_reason(text: str) -> str | None:
+    if _ID_LINE.search(text) or _LABEL_COLON.search(text):
+        return "id_or_label"
+    if _TIME_ONLY.search(text):
+        return "time"
+    if _SECTION.search(text):
+        return "section_heading"
+    if _KEY_VALUE.search(text) and not _TIME_ONLY.search(text):
+        return "key_value"
+    if _PAYMENT.search(text):
+        return "payment"
+    if _TITLE.search(text):
+        return "title"
+    if _PHONE.search(text):
+        return "phone"
+    if _URL.search(text):
+        return "url"
+    if _ADDRESS.search(text):
+        return "address"
+    if extract_date_text(text):
+        return "date"
+    if amounts_in(text):
+        return "amount"
+    return None
+
+
+def _semantic_quality(text: str) -> float:
+    """0..1: how much the line looks like a name rather than a code or a fragment."""
+    cjk = len(_CJK.findall(text))
+    letters = sum(c.isascii() and c.isalpha() for c in text)
+    digits = sum(c.isdigit() for c in text)
+    runs = [len(r) for r in re.findall(r"[A-Za-z]+", text)]
+    longest = max(runs, default=0)
+    initials = bool(re.fullmatch(r"\s*([A-Za-z][-.]){2,}[A-Za-z]\.?\s*", text))  # H-E-B, A.B.C.
+    if cjk >= 2:
+        q = 1.0
+    elif letters >= 3 and (longest >= 3 or initials):
+        q = 1.0
+    else:
+        return 0.0  # e.g. "0 # eo"
+    name_chars = letters + cjk
+    q -= 0.6 * digits / max(1, name_chars + digits)
+    if "#" in text and name_chars < 6:
+        q -= 0.4
+    if not cjk and letters and text == text.lower() and longest < 4:
+        q -= 0.3  # short lowercase fragment
+    if name_chars < 4 and not initials:
+        q -= 0.15
+    return max(0.0, min(1.0, q))
+
+
+def merchant_candidates(rows: list[Row]) -> list[dict]:
+    """Scored header candidates (debug evidence). The window stops at the first money row (item table)."""
+    out = []
+    for i, row in enumerate(rows[:MERCHANT_WINDOW]):
+        raw = row.text.strip()
+        if amounts_in(raw) and not extract_date_text(raw):
+            break  # reached the item table / totals
+        text = _WELCOME_PREFIX.sub("", raw).strip() or raw
+        reason = _reject_reason(text)
+        quality = 0.0 if reason else _semantic_quality(text)
+        if not reason and quality == 0.0:
+            reason = "fragment"
+        position = max(0.5, 1.0 - 0.06 * i)
+        score = round(row.score * quality * position, 3)
+        if not reason and score < MERCHANT_MIN_SCORE:
+            reason = "low_score"
+        out.append({"text": text[:120], "row": i, "score": score, "rejected": reason})
+    return out
+
+
 def extract_merchant(rows: list[Row]) -> tuple[str | None, float]:
-    for row in rows[:5]:
-        text = row.text.strip()
-        letters = sum(c.isalpha() for c in text)
-        if letters < 2 or row.score < 0.6:
-            continue
-        if _PHONE.search(text) or _URL.search(text) or _ADDRESS.search(text) or extract_date_text(text):
-            continue
-        if amounts_in(text):
-            continue
-        if re.fullmatch(r"(WELCOME|RECEIPT|INVOICE|收据|收據|发票|發票).*", text, re.IGNORECASE):
-            continue
-        return text[:120], round(min(row.score, 0.95), 2)
-    return None, 0.0
+    accepted = [c for c in merchant_candidates(rows) if c["rejected"] is None]
+    if not accepted:
+        return None, 0.0
+    best = max(accepted, key=lambda c: (c["score"], -c["row"]))
+    text, score = best["text"], best["score"]
+    trimmed = re.sub(r"\s*(&|\+|-|/|,|\band)\s*$", "", text, flags=re.IGNORECASE)
+    if trimmed != text:  # the name continues on a line OCR merged with something else
+        text, score = trimmed, score * 0.85
+    return text, round(min(score, 0.95), 2)
 
 
 def extract_date_text(text: str) -> date | None:
@@ -205,12 +324,30 @@ def extract_fields(segments: list[Segment]) -> dict:
     d, date_c = extract_date(rows)
     return {
         "merchant": merchant,
+        "merchant_source": "body" if merchant else None,
         "total": total,
         "currency_guess": guess_currency(rows),
         "date": d.isoformat() if d else None,
         "confidence": {"merchant": merchant_c, "total": total_c, "date": date_c},
         "raw_lines": [{"text": r.text, "confidence": round(r.score, 3)} for r in rows],
+        "merchant_candidates": merchant_candidates(rows),
     }
+
+
+HEADER_TARGET_WIDTH = 1280
+HEADER_MAX_PIXELS = 1_600_000
+
+
+def header_crop(img):
+    """Top of the receipt at higher resolution than the full-page pass (long receipts get shrunk a lot)."""
+    w, h = img.size
+    frac = 0.18 if h / max(w, 1) >= 1.8 else 0.3
+    crop = img.crop((0, 0, w, max(1, int(h * frac))))
+    cw, ch = crop.size
+    scale = min(HEADER_TARGET_WIDTH / cw, 2.0, (HEADER_MAX_PIXELS / (cw * ch)) ** 0.5)
+    if abs(scale - 1.0) > 0.05:
+        crop = crop.resize((max(1, int(cw * scale)), max(1, int(ch * scale))))
+    return crop
 
 
 # ---------------------------------------------------------------- engine
@@ -240,9 +377,7 @@ class OCREngine:
                 self._engine = RapidOCR(params=params)
             return self._engine
 
-    def _run(self, data: bytes, mime: str) -> list[Segment]:
-        img = to_pil(data, mime)
-        img.thumbnail((MAX_SIDE, MAX_SIDE))
+    def _ocr(self, img) -> list[Segment]:
         result = self._get_engine()(np.asarray(img)[:, :, ::-1].copy())  # RGB → BGR
         if result is None or result.txts is None:
             return []
@@ -251,6 +386,35 @@ class OCREngine:
             xs, ys = [p[0] for p in box], [p[1] for p in box]
             segs.append(Segment(text=str(text), score=float(score), x0=min(xs), y0=min(ys), x1=max(xs), y1=max(ys)))
         return segs
+
+    def _run(self, data: bytes, mime: str) -> dict:
+        s = get_settings()
+        started = time.monotonic()
+        full = to_pil(data, mime)
+        page = full.copy()
+        page.thumbnail((MAX_SIDE, MAX_SIDE))
+        fields = extract_fields(self._ocr(page))
+        # One bounded retry on the header only when no credible merchant was found, and only for photos
+        # that lost detail in the full-page pass (long receipts / large downscale). PDFs render cleanly.
+        # Total, date and raw_lines from the first pass are kept as they are.
+        w, h = full.size
+        lost_detail = h / max(w, 1) >= 1.8 or max(w, h) >= 2 * MAX_SIDE
+        if (
+            fields["merchant"] is None
+            and s.ocr_header_retry
+            and mime != "application/pdf"
+            and lost_detail
+            and time.monotonic() - started < s.ocr_timeout_seconds / 2
+        ):
+            rows = group_rows(self._ocr(header_crop(full)))
+            merchant, conf = extract_merchant(rows)
+            fields["header_lines"] = [{"text": r.text, "confidence": round(r.score, 3)} for r in rows]
+            fields["merchant_candidates"] += [{**c, "pass": "header"} for c in merchant_candidates(rows)]
+            if merchant:
+                fields["merchant"] = merchant
+                fields["merchant_source"] = "header_retry"
+                fields["confidence"]["merchant"] = round(conf * 0.9, 2)
+        return fields
 
     def read(self, data: bytes, mime: str) -> dict:
         s = get_settings()
@@ -263,7 +427,7 @@ class OCREngine:
         try:
             future = self._executor.submit(self._run, data, mime)
             try:
-                segments = future.result(timeout=s.ocr_timeout_seconds)
+                fields = future.result(timeout=s.ocr_timeout_seconds)
             except FutureTimeout:
                 raise APIError(422, "ocr_failed", "OCR timed out")
             except APIError:
@@ -274,7 +438,7 @@ class OCREngine:
         finally:
             with self._pending_lock:
                 self._pending -= 1
-        return extract_fields(segments)
+        return fields
 
 
 _engine: OCREngine | None = None

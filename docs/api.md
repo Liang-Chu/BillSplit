@@ -526,6 +526,12 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
   "attachment": { Attachment }
 }
 ```
+- Optional debug fields (new in 0.2.2, safe to ignore):
+  - `merchant_source`: `"body"`, `"header_retry"`, or `null`.
+  - `merchant_candidates`: header lines considered, each `{text, row, score, rejected}`, where `rejected` is a reason like `id_or_label`, `title`, `phone`, `address`, `fragment`, or `null` for accepted. Lines from the retry pass also carry `"pass": "header"`.
+  - `header_lines`: present only when the header retry ran.
+- `merchant` is chosen by a rule-based score (character confidence × name-likeness × position) among the first header lines before the item table. Customer/invoice/cashier/terminal numbers, times, payment methods, ticket titles, "key: value" lines, addresses, and phone numbers are never chosen. **If no credible line exists, `merchant` is `null`** (confidence 0). Rule-based extraction is best effort; the user confirms or types the store name.
+- For long photos with no credible merchant, the server re-reads the top of the receipt once at a higher resolution (inside the same OCR timeout). `total`, `date`, and `raw_lines` always come from the first pass.
 - Any field may be `null`. **Always treat the output as a pre-fill that the user confirms.**
 - `attachment` is present only when `keep=true`. Pass its id in `attachment_ids` when saving the expense.
 - Typical latency is 1–3 s. It may take longer if other OCR jobs are queued. Expect `429 ocr_busy` or `503 ocr_disabled`.
@@ -574,6 +580,7 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
 
 ## 5. Changelog
 - v1 (2026-10-05): initial.
+- v1.4 (backend 0.2.2): OCR merchant filtering and scoring, `merchant: null` when no credible store name, header retry for long photos, optional debug fields `merchant_source`, `merchant_candidates`, `header_lines`.
 - v1.3 (backend 0.2.1): new users get only the Personal group (no more Life Expense / Reimbursement).
 - v1.2 (backend 0.2.0): personal group order (`GET/PUT /me/group-order`, `Me.preferred_group_id`), `GET /groups` in that order, resolve/OCR fallback = preferred group, new error `group_order_conflict`. Transferring ownership to yourself is now a no-op (it used to demote the owner).
 - v1.1 (2026-10-05, implemented): per-user default expense type per group (`default_expense_type_id`, `PUT /groups/{id}/my-settings`), `group_id` input on `/expenses/resolve`, `ends_on` on period cut, explicit date→period rules, `keep` as query param on OCR, multi-group export layout.

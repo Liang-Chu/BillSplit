@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     ocr_max_concurrency: int = 1
     ocr_max_queue: int = 3
     ocr_timeout_seconds: int = 30
+    ocr_header_retry: bool = True  # second, bounded OCR pass on the receipt header when no merchant is found
     ocr_threads: int = 0  # ONNX Runtime threads per OCR job; 0 = all cores. Set to the vCPU count on small servers
 
     # Scheduler

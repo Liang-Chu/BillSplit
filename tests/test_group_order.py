@@ -337,3 +337,25 @@ def test_migration_initial_order_and_untouched_data(tmp_path, monkeypatch):
     prefs = {uid: (json.loads(o), rev) for uid, o, rev in
              con.execute("SELECT user_id, group_order, group_order_revision FROM user_preferences")}
     assert prefs == {"u1": (["g-def", "g-z", "g-a", "g-b"], 1)}  # default first, name, then id; no placeholders
+
+
+def test_ocr_without_credible_merchant_uses_preferred_group(client, admin: Api, shared, monkeypatch):
+    g, carol = shared
+    o = order(carol)
+    put(carol, to_front(o, g["id"]), o["revision"])
+    carol.post("/auto-rules", {"pattern": "customer", "set_group_id": carol.get("/me")["default_group_id"]}, expect=201)
+
+    from app.api import attachments as att_api
+
+    class FakeOCR:
+        def read(self, data, mime):
+            return {"merchant": None, "merchant_source": None, "total": 22180, "currency_guess": None,
+                    "date": "2026-10-04", "confidence": {"merchant": 0.0, "total": 0.85, "date": 0.83},
+                    "raw_lines": [{"text": "Customer # 0", "confidence": 0.95}], "merchant_candidates": []}
+
+    monkeypatch.setattr(att_api, "get_ocr", lambda: FakeOCR())
+    r = client.post("/api/v1/ocr/receipt?keep=false", headers=carol.h, files={"file": ("r.png", png_bytes(), "image/png")})
+    body = r.json()
+    assert body["merchant"] is None and body["total"] == 22180 and body["currency_guess"] is None
+    # rejected merchant → resolve gets no merchant → no rule match → preferred group
+    assert body["suggestion"]["group_id"] == g["id"] and body["suggestion"]["matched_rule_id"] is None
