@@ -16,6 +16,7 @@ from app.security import current_user
 from app.serializers import UserCache, group_out, paginate, user_out
 from app.services import access, audit
 from app.services.balances import compute_period_balances
+from app.services.group_order import sync_group_members, sync_users
 from app.services.people import check_claimable, group_placeholders, merge_into
 from app.services.periods import apply_recurrence_change, cut_period, rollover_group
 from app.services.seed import create_group
@@ -54,15 +55,21 @@ def _unique_join_code(db: Session, name: str) -> str:
 
 @router.get("/groups", response_model=dict[str, list[GroupOut]])
 def list_groups(include_archived: bool = False, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
-    stmt = (
+    """Available groups in the caller's own order (see `/me/group-order`); archived groups follow when requested."""
+    from app.services.group_order import sync
+
+    rows = db.execute(
         select(Group, GroupMember.role)
         .join(GroupMember, GroupMember.group_id == Group.id)
         .where(GroupMember.user_id == user.id, GroupMember.left_at.is_(None))
-        .order_by(Group.is_default.desc(), Group.name)
-    )
-    if not include_archived:
-        stmt = stmt.where(Group.archived_at.is_(None))
-    return {"items": [group_out(db, g, role, viewer_id=user.id) for g, role in db.execute(stmt).all()]}
+    ).all()
+    by_id = {g.id: (g, role) for g, role in rows}
+    ordered = [by_id[gid] for gid in sync(db, user.id).group_ids if gid in by_id]
+    if include_archived:
+        ordered += sorted(
+            ((g, r) for g, r in rows if g.archived_at is not None), key=lambda gr: (gr[0].name, gr[0].id)
+        )
+    return {"items": [group_out(db, g, role, viewer_id=user.id) for g, role in ordered]}
 
 
 class GroupCreate(BaseModel):
@@ -146,6 +153,7 @@ def archive_group(group_id: str, user: User = Depends(current_user), db: Session
         raise APIError(409, "default_group_protected", "The default group can't be deleted")
     g.archived_at = utcnow()
     audit.log(db, user.id, "group", g.id, "archive")
+    sync_group_members(db, g.id)  # drops it from every member's order
 
 
 @router.post("/groups/{group_id}/unarchive", response_model=GroupOut)
@@ -154,6 +162,7 @@ def unarchive_group(group_id: str, user: User = Depends(current_user), db: Sessi
     access.require_group_owner(m)
     g.archived_at = None
     audit.log(db, user.id, "group", g.id, "unarchive")
+    sync_group_members(db, g.id)  # re-appended at the end of every member's order
     return group_out(db, g, m.role, viewer_id=user.id)
 
 
@@ -167,6 +176,8 @@ def transfer_ownership(group_id: str, body: UserIdIn, user: User = Depends(curre
     access.require_group_owner(m)
     if g.is_default:
         raise APIError(409, "default_group_protected", "The default group can't be transferred")
+    if body.user_id == user.id:
+        return group_out(db, g, m.role, viewer_id=user.id)  # already the owner
     target = access.membership(db, g.id, body.user_id)
     if target is None or target.user.is_placeholder:
         raise validation("New owner must be a registered member", user_id="not a registered member")
@@ -250,6 +261,7 @@ def join_group(body: JoinIn, user: User = Depends(current_user), db: Session = D
         m.left_at, m.role, m.joined_at = None, "member", utcnow()
     db.flush()
     audit.log(db, user.id, "group", g.id, "join", {"claimed": body.claim_placeholder_id})
+    sync_users(db, [user.id])
     return group_out(db, g, m.role, viewer_id=user.id)
 
 
@@ -301,6 +313,7 @@ def add_member(group_id: str, body: AddMemberIn, user: User = Depends(current_us
         db.add(gm)
     db.flush()
     audit.log(db, user.id, "group", g.id, "add_member", {"user_id": target.id})
+    sync_users(db, [target.id])
     return MemberOut(user=user_out(target), role=gm.role, joined_at=gm.joined_at, left_at=None)
 
 
@@ -335,6 +348,7 @@ def remove_member(group_id: str, user_id: str, user: User = Depends(current_user
         raise APIError(409, "conflict", "The owner can't be removed")
     target.left_at = utcnow()
     audit.log(db, user.id, "group", g.id, "remove_member", {"user_id": user_id})
+    sync_users(db, [user_id])
 
 
 @router.post("/groups/{group_id}/leave", status_code=204)
@@ -346,6 +360,7 @@ def leave(group_id: str, user: User = Depends(current_user), db: Session = Depen
         raise APIError(409, "conflict", "Transfer ownership before leaving")
     m.left_at = utcnow()
     audit.log(db, user.id, "group", g.id, "leave")
+    sync_users(db, [user.id])
 
 
 @router.get("/groups/{group_id}/placeholders", response_model=dict[str, list[UserOut]])

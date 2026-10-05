@@ -34,6 +34,9 @@ def create_group(
     db.add(GroupMember(group_id=g.id, user_id=owner.id, role="owner"))
     db.flush()
     create_initial_period(db, g)
+    from app.services.group_order import sync_users
+
+    sync_users(db, [owner.id])  # new group goes to the end of the owner's order
     return g
 
 

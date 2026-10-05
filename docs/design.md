@@ -292,6 +292,7 @@ routings(id PK, user_id FK, name, group_id FK NULL, archived_at NULL, UNIQUE(use
 expense_types(id PK, user_id FK, name, routing_id FK, icon NULL, color NULL, archived_at NULL,
               UNIQUE(user_id,name))
 user_group_settings(user_id FK, group_id FK, default_expense_type_id FK NULL, PK(user_id,group_id))
+user_preferences(user_id PK FK, group_order JSON, group_order_revision INTEGER)   -- personal group order; first = preferred group
 auto_rules(id PK, user_id FK, priority, field CHECK(field IN ('merchant','title')),
            mode CHECK(mode IN ('contains','equals','regex')), pattern,
            set_type_id FK NULL, set_group_id FK NULL, enabled BOOL)
@@ -385,3 +386,4 @@ BillSplit/
 | 28 | Export of several groups | One workbook: a single Expenses sheet with a Group column + per-group/period Summary |
 | 29 | Bills dated before a group's first period | Go into the first period. Bills dated after the open period are rejected |
 | 30 | Deployment network | Backend reachable only inside the Tailscale tailnet (`tailscale serve`) |
+| 31 | Personal group order | Each user orders their available groups; the first is the preferred group for new expenses (resolve/OCR fallback). Separate from the protected default (private) group. Optimistic concurrency via a per-user revision |

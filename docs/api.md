@@ -53,6 +53,7 @@ Every error response has this shape:
 | 409 | `already_member` | |
 | 409 | `period_frozen` | Writing to a frozen period (or `expense_date` falls in one) |
 | 409 | `default_group_protected` | Deleting, archiving, or adding members to a default group |
+| 409 | `group_order_conflict` | `PUT /me/group-order` with a stale `revision`, or the set of groups changed. `details.current` = latest `{group_ids, preferred_group_id, revision}` |
 | 409 | `in_use` | Deleting a routing or type that is still referenced |
 | 413 | `file_too_large` | > `UPLOAD_MAX_MB` (default 10) |
 | 415 | `unsupported_file_type` | Not JPEG/PNG/WebP/HEIC/PDF (checked by content) |
@@ -76,9 +77,12 @@ Every error response has this shape:
 {
   "id": "u_..", "username": "liam", "display_name": "Liam", "email": null,
   "is_super_admin": false, "must_change_password": false,
-  "default_group_id": "g_..", "created_at": "..."
+  "default_group_id": "g_..", "preferred_group_id": "g_..", "created_at": "..."
 }
 ```
+Two **different** fields:
+- `default_group_id`: the protected, auto-created, only-me **private ledger**. It can't be shared, archived, left, transferred, or given members. Reordering never changes it.
+- `preferred_group_id`: the **first group in my own group order** (§3.2a), used as the default group for a new expense. It can be any available group, including a shared one. Right after upgrade or registration it equals `default_group_id`, until the user drags another group to the top.
 
 ### Group
 ```json
@@ -224,6 +228,54 @@ Legend: 🔓 public · 👤 any logged-in user · 👥 group member · 🛡 grou
 | GET | `/people?q=bo` | 👤 | People I can add to a bill: members of my groups + placeholders I created. For a guest picker |
 | POST | `/placeholders` | 👤 | `{display_name, group_id?}` creates a placeholder. If `group_id` is given (and the caller is a member), it is also added as a member |
 
+### 3.2a My group order (personal)
+
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| GET | `/me/group-order` | 👤 | My ordered list of available groups |
+| PUT | `/me/group-order` | 👤 | Replace the whole order (with the revision I read) |
+
+A **personal preference** of the caller. It doesn't change any group, other members' orders, `is_default`, or `default_group_id`, and needs no group role, so plain members can save it too.
+
+**Available groups** are groups where I'm an active member and that are not archived. Groups I left, was removed from, or that are archived never appear in the order and are never suggested.
+
+**`GET /me/group-order`** →
+```json
+{ "group_ids": ["g_shared", "g_personal", "g_other"], "preferred_group_id": "g_shared", "revision": 7 }
+```
+- `group_ids`: **all** my available groups, in my order.
+- `preferred_group_id`: always `group_ids[0]`, or `null` if I have no available groups. It's the default group for new expenses. There is no separate "default expense group" setting that could disagree with the order.
+- `revision`: a per-user integer that increases whenever the list changes (my reorder, or groups joining/leaving my available set). Reads never change it.
+
+**`PUT /me/group-order`**
+```json
+{ "group_ids": ["g_other", "g_shared", "g_personal"], "revision": 7 }
+```
+→ `200` with the same shape as GET (e.g. `revision: 8`). Validation runs in one transaction, and nothing is written on failure:
+
+| Case | Response |
+|---|---|
+| Duplicate ids, or not a list of strings | `400 validation_error` (`details.fields.group_ids`) |
+| An id that doesn't exist, belongs to a group I'm not in, or a group I left | `404 not_found` (no information about other users' groups) |
+| `revision` ≠ current, **or** the set ≠ my current available groups (missing one, includes an archived one, a group was added meanwhile…) | `409 group_order_conflict` with `error.details.current` = the latest GET body |
+| Same order as current, with the current revision | `200`, unchanged (no new revision) |
+
+Conflict example:
+```json
+{ "error": { "code": "group_order_conflict", "message": "Group order changed. Refresh and retry.",
+  "details": { "current": { "group_ids": ["g_other", "g_shared", "g_personal", "g_new"],
+                            "preferred_group_id": "g_other", "revision": 9 } } } }
+```
+**Client flow:** load with GET → user drags → PUT the full list with the revision you read → replace local state with the response. On `409`, take `details.current` (or GET again), show it, and let the user redo the drag. Don't retry automatically with the new revision, because that would overwrite a change made on another device.
+
+**How the order changes by itself** (each change bumps `revision`):
+- Creating, joining, or being added to a group, **re-joining**, or a group being **unarchived** → appended at the **end** (never takes over first place).
+- Leaving, being removed, or a group being **archived** → removed, and the rest keep their relative order. If it was first, the next group becomes `preferred_group_id`. Archiving updates every member's order.
+- New users start with their seeded groups (Personal, Life Expense, Reimbursement), then any group they joined with a code.
+- Existing users at upgrade time: private ledger first, then by group name, then by id. This is what `GET /groups` showed before, so their default didn't change.
+
+`GET /groups` returns `items` in this same order. With `include_archived=true`, the archived groups come after the available ones (sorted by name); they're not part of `group_ids`.
+
 **`GET /me/overview`** →
 ```json
 {
@@ -252,7 +304,7 @@ Only periods with a non-zero outstanding amount for me, plus the current open pe
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| GET | `/groups?include_archived=false` | 👤 | My groups |
+| GET | `/groups?include_archived=false` | 👤 | My groups, in **my group order** (§3.2a); archived ones last when included |
 | POST | `/groups` | 👤 | Create a group (caller becomes owner) |
 | GET | `/groups/{id}` | 👥 | |
 | PATCH | `/groups/{id}` | 🛡 | Name, description, currency (until the first expense), recurrence, `join_enabled` |
@@ -358,7 +410,9 @@ Resolution order:
 1. **`group_id` sent** (the user picked the group by hand): keep it. If no type was sent, use my default type for that group (`source: group_default`). Auto-rules are skipped.
 2. **`expense_type_id` sent**: type → routing → group (`source: type`).
 3. **Neither sent**: the first matching auto-rule on merchant/title sets the type and/or group (`source: rule`). A rule that sets only a type continues through type → routing → group.
-4. Fallback: my default group and its default type (`source: default`).
+4. Fallback: my **preferred group** (`group_ids[0]` of `/me/group-order`) and my default type for that group (`source: default`). That type is **not** routed again, so it can't move the suggestion to another group.
+
+Groups that are archived or that I'm no longer in are never returned. If a rule's or routing's target group is unavailable, resolution falls back to the preferred group. `POST /ocr/receipt` uses the same logic for `suggestion`, and its own `total`, `date`, `merchant`, and `currency_guess` are returned unchanged.
 
 Call it when merchant or type changes. Send `group_id` only when the user picked the group by hand.
 
@@ -520,4 +574,5 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
 
 ## 5. Changelog
 - v1 (2026-10-05): initial.
+- v1.2 (backend 0.2.0): personal group order (`GET/PUT /me/group-order`, `Me.preferred_group_id`), `GET /groups` in that order, resolve/OCR fallback = preferred group, new error `group_order_conflict`. Transferring ownership to yourself is now a no-op (it used to demote the owner).
 - v1.1 (2026-10-05, implemented): per-user default expense type per group (`default_expense_type_id`, `PUT /groups/{id}/my-settings`), `group_id` input on `/expenses/resolve`, `ends_on` on period cut, explicit date→period rules, `keep` as query param on OCR, multi-group export layout.

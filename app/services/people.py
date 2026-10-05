@@ -157,4 +157,7 @@ def merge_into(db: Session, placeholder: User, target: User, actor_id: str) -> N
 
     placeholder.merged_into_id = tid
     db.flush()
+    from app.services.group_order import sync_users
+
+    sync_users(db, [tid])
     audit.log(db, actor_id, "user", pid, "merge", {"into": tid})

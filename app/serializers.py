@@ -53,8 +53,11 @@ def user_out(u: User) -> UserOut:
 def me_out(db: Session, u: User) -> MeOut:
     from app.services.people import default_group
 
+    from app.services.group_order import preferred_group_id
+
     dg = default_group(db, u.id)
     return MeOut(
+        preferred_group_id=preferred_group_id(db, u.id),
         id=u.id, username=u.username, display_name=u.display_name, email=u.email, is_super_admin=u.is_super_admin,
         must_change_password=u.must_change_password, default_group_id=dg.id if dg else None, created_at=u.created_at,
     )

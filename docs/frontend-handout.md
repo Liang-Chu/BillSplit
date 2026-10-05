@@ -126,6 +126,17 @@ Edit uses the same screen (`PATCH`). Respect `expense.permissions.can_edit`. If 
 
 ---
 
+## 3.10 Group order and the default group for new bills
+
+- The order of groups in the picker (and in the group list) is **per user and stored on the server**: `GET /me/group-order` (`GET /groups` already returns this order).
+- **The first group is the default group for a new bill** (`preferred_group_id`, also on `GET /me`). This is *not* `me.default_group_id`, which is the protected private ledger. Keep both concepts separate in the UI.
+- Drag to reorder → `PUT /me/group-order` with the full list and the `revision` you read → replace your state with the response.
+- On `409 group_order_conflict`: show `error.details.current`, tell the user the order changed elsewhere, and let them drag again. Don't silently re-PUT.
+- Local order saved in the browser before this existed: **don't push it automatically.** Use the server order. If the user drags, that PUT becomes the server's order. You can now remove the "order is saved on this device only" notice.
+- New-bill form: pre-select `preferred_group_id`, then call `POST /expenses/resolve`. Without `group_id`, it returns the preferred group plus my default type for it, unless a merchant rule matches. When the user changes the group by hand, clear the type and call resolve with only `group_id` to get that group's default type. When the user then picks a type by hand, keep the group they chose.
+- `POST /expenses` still needs the final `group_id`. Changing the order never moves existing bills.
+- Group balances: keep using `GET /periods/{id}/balances` → `pairwise` (every remaining who-owes-whom pair in the whole period, not simplified) and `POST /settlements`.
+
 ## 4. Rules & Gotchas
 
 1. **Money is integer minor units.** Never use floats. Parse user input "12.30" → `1230` using the currency's `minor_units` (`GET /meta/currencies`; JPY = 0). Display with `Intl.NumberFormat`.

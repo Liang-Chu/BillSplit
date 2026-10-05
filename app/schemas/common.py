@@ -22,7 +22,14 @@ class MeOut(Out):
     email: str | None
     is_super_admin: bool
     must_change_password: bool
-    default_group_id: str | None = None
+    default_group_id: str | None = Field(
+        None, description="The protected, auto-created, only-me private ledger. Never changes with group ordering."
+    )
+    preferred_group_id: str | None = Field(
+        None,
+        description="First group in the caller's own group order (`/me/group-order`): the default for new expenses. "
+        "Not the same as `default_group_id`.",
+    )
     created_at: datetime
 
 

@@ -135,6 +135,17 @@ class UserGroupSetting(Base):
     )
 
 
+class UserPreference(Base):
+    """Per-user preferences. `group_order` is the user's ordering of their available groups;
+    its first entry is the user's preferred group for new expenses (not the protected default group)."""
+
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    group_order: Mapped[list] = mapped_column(JSON, default=list)
+    group_order_revision: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Period(Base):
     __tablename__ = "periods"
 

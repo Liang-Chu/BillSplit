@@ -41,6 +41,39 @@ def patch_me(body: MePatch, user: User = Depends(current_user), db: Session = De
     return me_out(db, user)
 
 
+class GroupOrderOut(BaseModel):
+    group_ids: list[str] = Field(description="All of the caller's available groups (active member, not archived), in order")
+    preferred_group_id: str | None = Field(description="Always group_ids[0]; null when there are no available groups")
+    revision: int = Field(description="Increases whenever the order or the set of available groups changes")
+
+
+class GroupOrderIn(BaseModel):
+    group_ids: list[str] = Field(description="The complete set of available groups, in the new order")
+    revision: int = Field(description="The revision the client last read")
+
+
+@router.get("/me/group-order", response_model=GroupOrderOut)
+def get_group_order(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
+    """My personal group order. The first group is my default group for new expenses.
+
+    Personal preference only: it does not change any group, other members' order, or `default_group_id`."""
+    from app.services.group_order import sync
+
+    return sync(db, user.id).as_dict()
+
+
+@router.put(
+    "/me/group-order", response_model=GroupOrderOut,
+    responses={409: {"description": "`group_order_conflict`: stale revision or the set of groups changed. "
+                                    "`error.details.current` holds the latest order."}},
+)
+def put_group_order(body: GroupOrderIn, user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
+    """Replace my group order. Must list exactly my available groups, with the revision I last read."""
+    from app.services.group_order import put_order
+
+    return put_order(db, user, body.group_ids, body.revision).as_dict()
+
+
 @router.get("/me/overview")
 def overview(user: User = Depends(current_user), db: Session = Depends(get_db, scope="function")):
     """What I owe / am owed, per currency and per group period with outstanding amounts."""

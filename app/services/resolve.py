@@ -1,13 +1,16 @@
-"""Suggest an expense type and group: auto-rule → type → routing → group → default group."""
+"""Suggest an expense type and group: manual group → type → routing → auto-rule → preferred group.
+
+The final fallback is the caller's preferred group (first in their own group order), not the protected
+default group."""
 
 import re
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AutoRule, ExpenseType, Routing, User, UserGroupSetting
+from app.models import AutoRule, ExpenseType, Group, Routing, User, UserGroupSetting
 from app.services.access import membership
-from app.services.people import default_group
+from app.services.group_order import preferred_group_id
 
 
 def rule_matches(rule: AutoRule, merchant: str | None, title: str | None) -> bool:
@@ -33,8 +36,11 @@ def first_matching_rule(db: Session, user: User, merchant: str | None, title: st
 
 
 def _usable_group(db: Session, group_id: str | None, user: User) -> str | None:
+    """Only groups where the user is an active member and that are not archived."""
     if group_id and membership(db, group_id, user.id):
-        return group_id
+        g = db.get(Group, group_id)
+        if g is not None and g.archived_at is None:
+            return group_id
     return None
 
 
@@ -46,7 +52,7 @@ def resolve(
 
     - group picked, no type → the group's default type (caller's setting)
     - type picked, no group → type → routing → group
-    - neither → first matching auto-rule, then the above, then the default group
+    - neither → first matching auto-rule, then the above, then my preferred group (+ my default type for it)
     """
     group_id = _usable_group(db, group_id, user)
     manual_group = group_id is not None
@@ -78,13 +84,14 @@ def resolve(
     if manual_group and source == "default":
         source = "manual"
     if group_id is None:
-        dg = default_group(db, user.id)
-        group_id = dg.id if dg else None
+        group_id = preferred_group_id(db, user.id)
     if not rule and etype is None and not manual_group:
-        # A merchant-less suggestion with nothing picked: use the default group's default type
+        # Nothing picked and no rule: the preferred group plus my default type for it.
+        # The type is not routed again, so it can't move the suggestion away from the preferred group.
         setting = db.get(UserGroupSetting, (user.id, group_id)) if group_id else None
-        if setting and setting.default_expense_type_id:
-            type_id = setting.default_expense_type_id
+        default_type = db.get(ExpenseType, setting.default_expense_type_id) if setting and setting.default_expense_type_id else None
+        if default_type and default_type.user_id == user.id and default_type.archived_at is None:
+            type_id = default_type.id
     return {
         "expense_type_id": type_id,
         "group_id": group_id,

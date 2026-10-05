@@ -19,6 +19,7 @@ from app.security import (
 from app.serializers import me_out
 from app.services import audit
 from app.services.people import check_claimable, group_placeholders
+from app.services.group_order import sync_users
 from app.services.seed import seed_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -98,7 +99,7 @@ def register(body: RegisterIn, db: Session = Depends(get_db, scope="function")):
     elif m.left_at is not None:
         m.left_at = None
     audit.log(db, user.id, "user", user.id, action, {"group_id": g.id})
-    db.flush()
+    sync_users(db, [user.id])
     return token_response(db, user)
 
 

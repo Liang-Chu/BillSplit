@@ -52,13 +52,25 @@ git pull                                   # 如有代码更新
 scripts/stop.sh && HOST=$(tailscale ip -4) scripts/start.sh
 ```
 
-数据库结构变更（迁移）会在启动时自动执行。
+数据库结构变更（迁移）会在启动时自动执行。**升级前建议先备份数据库**（见下面"备份"一节）。
+
+## 备份
+
+```bash
+cd ~/dev/BillSplit
+mkdir -p backups
+.venv/bin/python -c "import sqlite3;s=sqlite3.connect('data/billsplit.db');d=sqlite3.connect('backups/billsplit-$(date +%Y%m%d-%H%M%S).db');s.backup(d)"
+```
+
+后端运行中也可以安全备份。上传的文件在 `data/files/`，需要的话一起复制。
+
+**恢复：** 先 `scripts/stop.sh`，再把备份文件复制回 `data/billsplit.db`（同时删掉 `data/billsplit.db-wal` 和 `data/billsplit.db-shm`），然后重新启动。
 
 ## 查看状态
 
 ```bash
 curl http://nuc.tailcfa4ec.ts.net:8000/api/v1/health
-# {"status":"ok","version":"0.1.0","ocr_enabled":true,"storage":"local"}
+# {"status":"ok","version":"0.2.0","ocr_enabled":true,"storage":"local"}
 ```
 
 能返回 JSON 就说明在正常运行。
