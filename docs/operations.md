@@ -6,12 +6,15 @@
 
 | 项目 | 地址 |
 |---|---|
-| API | `http://nuc.tailcfa4ec.ts.net:8000/api/v1` |
+| API（公网，经 Cloudflare Tunnel） | `https://billmgt-dev.liam-chu.com/api/v1` |
+| API（仅 Tailscale 内网） | `http://nuc.tailcfa4ec.ts.net:8000/api/v1` |
 | Swagger 文档 | `http://nuc.tailcfa4ec.ts.net:8000/docs` |
 | 健康检查 | `http://nuc.tailcfa4ec.ts.net:8000/api/v1/health` |
 | 测试账号 | `admin` / `password` |
 
-只有登录了同一个 Tailscale 账号的设备才能访问（手机需要装 Tailscale App）。
+- **公网地址**任何人都能访问（目前只有虚拟测试数据，所以这样没问题）。
+- **Tailscale 地址**只有登录了同一个 Tailscale 账号的设备才能访问（手机需要装 Tailscale App）。
+- 两个地址指向同一个后端、同一份数据。公网地址的转发路径是：Cloudflare → `cloudflared` → Caddy（本机 80 端口）→ `100.80.80.2:8000`。所以**后端必须用 `HOST=$(tailscale ip -4)` 启动**，否则公网地址会返回 502。
 
 ---
 
@@ -122,7 +125,17 @@ HOST=$(tailscale ip -4) scripts/start.sh   # 会重建数据库，并按 .env �
 
 ---
 
-## 以后改成 HTTPS（可选）
+## 撤掉公网地址（测试结束后）
+
+公网地址是临时加的，涉及三处配置，改之前的版本都有备份（文件名带 `bak-pre-billmgt-` 前缀）：
+
+1. `/etc/caddy/Caddyfile`：删除末尾 `BILLSPLIT TEST BACKEND` 那一段，然后运行 `sudo systemctl reload caddy`（平滑重载，其他服务不受影响）。
+2. `/etc/cloudflared/config.yml`：删除 `billmgt-dev.liam-chu.com` 那条规则，然后运行 `sudo systemctl restart cloudflared`（其他服务会断几秒）。
+3. Cloudflare 后台 → DNS：删除 `billmgt-dev` 这条 CNAME 记录。
+
+> 子域名必须是一级的（如 `billmgt-dev.liam-chu.com`）。像 `billmgt.dev.liam-chu.com` 这样的两级子域名，不在 Cloudflare 免费证书的覆盖范围内，浏览器会报 HTTPS 证书错误。
+
+## 以后改成 HTTPS（可选，仅 Tailscale 地址）
 
 1. 在 Tailscale 后台开启 Serve：https://login.tailscale.com/f/serve?node=n6gkUDDhk611CNTRL
 2. 在 Tailscale 后台的 DNS 页面开启 HTTPS Certificates。
