@@ -131,15 +131,7 @@ bob:   Food      ───► routing "Home" ──► group "Livexpense"
 
 - `routing.group_id` is nullable. An unmapped routing resolves to the user's default group.
 - **Per-group default type** (`user_group_settings`): each user can pick one of their types as the default for a group. Choosing the group by hand pre-selects that type. This is the reverse direction of type → routing → group.
-- **Seed for every new user** (registration or placeholder convert). Three only-me groups, each with a routing and a type of the same name pointing to it:
-
-  | Group (only-me) | Routing | Expense type | Notes |
-  |---|---|---|---|
-  | **Personal** | Personal | Personal | `is_default`, undeletable |
-  | **Life Expense** | Life Expense | Life Expense | Remap the routing to a shared group (e.g. the residence's group) |
-  | **Reimbursement** | Reimbursement | Reimbursement | e.g. work expenses to claim back |
-
-  Only Personal is protected. The other two are normal groups and routings the user can rename, remap, or delete.
+- **Seed for every new user** (registration or placeholder convert): only the protected **Personal** group (`is_default`, undeletable), plus a routing and a type named "Personal" pointing to it. Users create any other groups, routings, and types themselves.
 - Deleting a routing that types still use is blocked. Types and routings are archived rather than hard-deleted once they are used by an expense.
 - An expense stores `expense_type_id` (the creator's type). Other members viewing the bill see the creator's type name (read-only label).
 
@@ -376,12 +368,12 @@ BillSplit/
 | 18 | OCR | RapidOCR, EN+ZH, 2 GB instance |
 | 19 | Uploads | 10 MB per file, HEIC accepted (converted to JPEG), no count limit, no orphan cleanup |
 | 20 | Group admin | Owner + admins |
-| 21 | Seed data | 3 only-me groups + routings + types: Personal (default), Life Expense, Reimbursement |
+| 21 | Seed data | Only the protected Personal group + a "Personal" routing and type. (Life Expense / Reimbursement were seeded until 0.2.1 and removed; the unused copies were deleted from the test DB) |
 | 22 | OCR limits | Configurable via env (defaults 1 running / 3 queued / 30 s) |
 | 23 | R2 re-sync | Delete the local copy after a successful sync |
 | 24 | Frozen-period bills | Rejected (no unfreeze) |
 | 25 | Admins editing others' bills | Not allowed (creator, payer, owner only) |
-| 26 | Per-group default type | Each user can set a default expense type per group; picking the group pre-selects it (still overridable). Seeded groups default to the same-named type |
+| 26 | Per-group default type | Each user can set a default expense type per group; picking the group pre-selects it (still overridable). The seeded Personal group defaults to the "Personal" type |
 | 27 | Auto-rule results | Always a suggestion; the user can override type and group before saving |
 | 28 | Export of several groups | One workbook: a single Expenses sheet with a Group column + per-group/period Summary |
 | 29 | Bills dated before a group's first period | Go into the first period. Bills dated after the open period are rejected |

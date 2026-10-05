@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 from openpyxl import load_workbook
 
-from tests.conftest import Api, login, pdf_bytes, png_bytes, register
+from tests.conftest import Api, login, make_type, pdf_bytes, png_bytes, register
 
 
 def make_livexpense(admin: Api) -> dict:
@@ -21,7 +21,7 @@ def test_bootstrap_and_seed(admin: Api):
     assert me["is_super_admin"] and me["default_group_id"]
     groups = admin.get("/groups")["items"]
     assert [g["name"] for g in groups][:1] == ["Personal"]
-    assert {g["name"] for g in groups} == {"Personal", "Life Expense", "Reimbursement"}
+    assert [g["name"] for g in groups] == ["Personal"]  # only the protected private ledger is seeded
     personal = groups[0]
     assert personal["is_default"] and personal["default_expense_type_id"]
     # default group is protected
@@ -29,7 +29,7 @@ def test_bootstrap_and_seed(admin: Api):
     admin.post(f"/groups/{personal['id']}/members", {"display_name": "X"}, expect=409)
     types = admin.get("/expense-types")["items"]
     routings = admin.get("/routings")["items"]
-    assert {t["name"] for t in types} == {r["name"] for r in routings} == {"Personal", "Life Expense", "Reimbursement"}
+    assert [t["name"] for t in types] == [r["name"] for r in routings] == ["Personal"]
 
 
 def test_full_flow(client, admin: Api):
@@ -92,7 +92,7 @@ def test_full_flow(client, admin: Api):
     assert bob.user["id"] == bob_ph["id"]
     mine = bob.get("/expenses?involving=me")["items"]
     assert [e["id"] for e in mine] == [exp["id"]]
-    assert len(bob.get("/groups")["items"]) == 4  # 3 seeded + Livexpense
+    assert len(bob.get("/groups")["items"]) == 2  # Personal + Livexpense
 
 
 def test_guest_and_merge_into_existing(client, admin: Api):
@@ -124,10 +124,7 @@ def test_guest_and_merge_into_existing(client, admin: Api):
 
 def test_resolve_rules_and_group_default_type(admin: Api):
     g = make_livexpense(admin)
-    routings = {r["name"]: r for r in admin.get("/routings")["items"]}
-    types = {t["name"]: t for t in admin.get("/expense-types")["items"]}
-    # point the Life Expense routing at the shared group
-    admin.patch(f"/routings/{routings['Life Expense']['id']}", {"group_id": g["id"]})
+    types = {"Life Expense": make_type(admin, "Life Expense", g["id"]), "Reimbursement": make_type(admin, "Reimbursement")}
     admin.post("/auto-rules", {"pattern": "heb", "set_type_id": types["Life Expense"]["id"]}, expect=201)
 
     r = admin.post("/expenses/resolve", {"merchant": "H-E-B #123 HEB GROCERY"})

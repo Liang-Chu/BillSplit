@@ -38,7 +38,14 @@ Without `HOST`, it listens on `127.0.0.1` only.
 
 ## Deploy (small EC2 + Tailscale)
 
-Target: 2 GB RAM (e.g. `t4g.small`). The process uses about 360 MB with the OCR model loaded.
+Target: **2 GB RAM, 2 vCPU** (e.g. Lightsail 2 GB plan or `t4g.small`).
+
+Measured on real receipts (0.2.1): about 135 MB idle, about 490 MB once OCR has run, and a peak of about 600–800 MB while reading a receipt (PDFs are the heaviest). On 2 cores, one receipt takes about 3–6 s of wall time and about 10 CPU-seconds. A 1 GB server works only with swap, and risks being OOM-killed on large PDFs.
+
+On the server:
+- Set `OCR_THREADS` to the vCPU count (e.g. `2`).
+- Add swap as a safety net: `sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`, plus an `/etc/fstab` entry.
+- Burstable instances (Lightsail, t-series) are fine: OCR is short bursts, so a few dozen receipts a day use very little CPU credit.
 
 1. Install Tailscale on the server and join the tailnet: `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`.
 2. Run the API bound to **localhost only** (`--host 127.0.0.1 --port 8000`) via systemd, or via Docker with `ports: ["127.0.0.1:8000:8000"]`. Keep port 8000 closed in the EC2 security group.

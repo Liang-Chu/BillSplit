@@ -4,10 +4,8 @@ from app.models import ExpenseType, Group, GroupMember, Routing, User, UserGroup
 from app.services.periods import create_initial_period
 
 SEED = [
-    # (group/routing/type name, is_default)
+    # (group/routing/type name, is_default). Users add any other groups themselves.
     ("Personal", True),
-    ("Life Expense", False),
-    ("Reimbursement", False),
 ]
 
 
@@ -41,7 +39,7 @@ def create_group(
 
 
 def seed_user(db: Session, user: User, currency: str | None = None) -> Group:
-    """Creates the 3 only-me groups with matching routings and types. Returns the default group."""
+    """Creates the protected Personal group with a matching routing and type. Returns the default group."""
     from app.config import get_settings
     from app.ids import join_code
 

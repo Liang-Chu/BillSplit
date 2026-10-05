@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import Api, login, png_bytes, register
+from tests.conftest import Api, login, make_type, png_bytes, register
 
 
 def new_group(api: Api, name: str) -> dict:
@@ -113,8 +113,7 @@ def test_preferred_group_drives_resolve_and_ocr(client, admin: Api, shared, monk
 def test_resolve_priority_and_fallback(client, admin: Api, shared):
     g, carol = shared
     other = new_group(carol, "Trip")
-    types = {t["name"]: t for t in carol.get("/expense-types")["items"]}
-    routings = {r["name"]: r for r in carol.get("/routings")["items"]}
+    types = {"Life Expense": make_type(carol, "Life Expense"), "Reimbursement": make_type(carol, "Reimbursement")}
     o = order(carol)
     put(carol, to_front(o, other["id"]), o["revision"])  # preferred = Trip
 
@@ -133,7 +132,7 @@ def test_resolve_priority_and_fallback(client, admin: Api, shared):
     assert r["group_id"] == g["id"] and r["source"] == "rule"
 
     # explicit type → routing beats the preferred group
-    carol.patch(f"/routings/{routings['Life Expense']['id']}", {"group_id": g["id"]})
+    carol.patch(f"/routings/{types['Life Expense']['routing_id']}", {"group_id": g["id"]})
     r = carol.post("/expenses/resolve", {"expense_type_id": types["Life Expense"]["id"]})
     assert r["group_id"] == g["id"] and r["source"] == "type"
 
@@ -269,7 +268,7 @@ def test_new_user_seed_order(client, admin: Api, shared):
     g, carol = shared
     o = order(carol)
     names = {x["id"]: x["name"] for x in carol.get("/groups")["items"]}
-    assert [names[i] for i in o["group_ids"]] == ["Personal", "Life Expense", "Reimbursement", "Flat"]
+    assert [names[i] for i in o["group_ids"]] == ["Personal", "Flat"]
     assert o["preferred_group_id"] == carol.get("/me")["default_group_id"]
 
 

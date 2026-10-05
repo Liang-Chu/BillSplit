@@ -80,6 +80,12 @@ def admin(client) -> Api:
     return login(client, "admin", "admin-password")
 
 
+def make_type(api: "Api", name: str, group_id: str | None = None) -> dict:
+    """Create a routing (optionally pointing at a group) and a type of the same name."""
+    r = api.post("/routings", {"name": name, "group_id": group_id}, expect=201)
+    return api.post("/expense-types", {"name": name, "routing_id": r["id"]}, expect=201) | {"routing_id": r["id"]}
+
+
 def png_bytes(color="red", size=(64, 48)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", size, color).save(buf, "PNG")

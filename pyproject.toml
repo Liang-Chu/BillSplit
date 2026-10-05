@@ -1,6 +1,6 @@
 [project]
 name = "billsplit"
-version = "0.2.0"
+version = "0.2.1"
 description = "Internal expense management & bill-splitting backend"
 requires-python = ">=3.12"
 dependencies = [

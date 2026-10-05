@@ -99,7 +99,7 @@ Two **different** fields:
   "archived_at": null, "created_at": "..."
 }
 ```
-- `default_expense_type_id` is **the caller's own** default type for this group. Picking this group pre-selects that type; the user can still change it. Set it with `PUT /groups/{id}/my-settings`. Seeded groups default to the type of the same name.
+- `default_expense_type_id` is **the caller's own** default type for this group. Picking this group pre-selects that type; the user can still change it. Set it with `PUT /groups/{id}/my-settings`. The seeded Personal group defaults to the "Personal" type.
 - `recurrence` is `null` when `is_recurring` is false.
 - `cadence` is one of `monthly`, `weekly`, or `every_n_days` (uses `cadence_n`).
 - `anchor_day` is the day of the month (1–28) for monthly, the weekday (1=Mon … 7=Sun) for weekly, or ignored for `every_n_days` (the anchor is the first period's start).
@@ -205,7 +205,7 @@ Legend: 🔓 public · 👤 any logged-in user · 👥 group member · 🛡 grou
   "display_name": "Bob", "email": null, "claim_placeholder_id": "u_.." }
 ```
 - If `claim_placeholder_id` is set (it must be one from the preview), the placeholder is **converted** into this account. Its history is kept.
-- The new user always gets the seed groups (Personal, Life Expense, Reimbursement, see design §6.3) and joins the code's group.
+- The new user always gets the protected **Personal** group (plus a "Personal" routing and type) and joins the code's group. No other groups are created.
 - Returns `201` with the same body as login.
 
 **`POST /auth/login`** `{ "username", "password" }` →
@@ -271,7 +271,7 @@ Conflict example:
 **How the order changes by itself** (each change bumps `revision`):
 - Creating, joining, or being added to a group, **re-joining**, or a group being **unarchived** → appended at the **end** (never takes over first place).
 - Leaving, being removed, or a group being **archived** → removed, and the rest keep their relative order. If it was first, the next group becomes `preferred_group_id`. Archiving updates every member's order.
-- New users start with their seeded groups (Personal, Life Expense, Reimbursement), then any group they joined with a code.
+- New users start with `[Personal, <the group they joined with the code>]`.
 - Existing users at upgrade time: private ledger first, then by group name, then by id. This is what `GET /groups` showed before, so their default didn't change.
 
 `GET /groups` returns `items` in this same order. With `include_archived=true`, the archived groups come after the available ones (sorted by name); they're not part of `group_ids`.
@@ -574,5 +574,6 @@ Accepted: JPEG, PNG, WebP, HEIC/HEIF (stored as JPEG), and PDF, up to 10 MB each
 
 ## 5. Changelog
 - v1 (2026-10-05): initial.
+- v1.3 (backend 0.2.1): new users get only the Personal group (no more Life Expense / Reimbursement).
 - v1.2 (backend 0.2.0): personal group order (`GET/PUT /me/group-order`, `Me.preferred_group_id`), `GET /groups` in that order, resolve/OCR fallback = preferred group, new error `group_order_conflict`. Transferring ownership to yourself is now a no-op (it used to demote the owner).
 - v1.1 (2026-10-05, implemented): per-user default expense type per group (`default_expense_type_id`, `PUT /groups/{id}/my-settings`), `group_id` input on `/expenses/resolve`, `ends_on` on period cut, explicit date→period rules, `keep` as query param on OCR, multi-group export layout.

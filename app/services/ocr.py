@@ -18,7 +18,7 @@ from app.services.files import to_pil
 
 log = logging.getLogger(__name__)
 
-MAX_SIDE = 1600
+MAX_SIDE = 1280  # long edge sent to OCR; 1280 matched 1600 on real receipts with less memory and time
 
 
 @dataclass
@@ -230,7 +230,14 @@ class OCREngine:
             if self._engine is None:
                 from rapidocr import RapidOCR
 
-                self._engine = RapidOCR()
+                threads = get_settings().ocr_threads
+                params = None
+                if threads > 0:
+                    params = {
+                        "EngineConfig.onnxruntime.intra_op_num_threads": threads,
+                        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+                    }
+                self._engine = RapidOCR(params=params)
             return self._engine
 
     def _run(self, data: bytes, mime: str) -> list[Segment]:

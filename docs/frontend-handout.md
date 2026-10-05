@@ -42,7 +42,7 @@ An **internal** expense-tracking and bill-splitting app for a small set of peopl
 |---|---|
 | **Group** | A set of people sharing bills. Every bill lives in exactly one group. Each group has one currency. |
 | **Default group ("Personal")** | Just me. It can't be deleted. My private expenses go here. |
-| **Only-me groups** | Any group with just me. New users start with three: **Personal**, **Life Expense**, **Reimbursement**. |
+| **Only-me groups** | Any group with just me. New users start with just **Personal** and add other groups themselves. |
 | **Expense type** | My own categories (e.g. "Groceries"). Each type points to a **routing**. Each group can also have **my default type** (`group.default_expense_type_id`): picking that group pre-selects the type. Types don't drive much yet beyond labeling and routing. |
 | **Routing** | My own "where does this go" switch. Example: routing "Life Expense" → group "Livexpense". Changing the routing's group moves all its types at once. |
 | **Auto-rule** | "If the store name contains COSTCO → type Groceries (and/or group X)". Saves the user picking anything. |
