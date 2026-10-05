@@ -19,7 +19,7 @@ The backend and frontend run on the same **Tailscale** network (tailnet). The ba
 | Health check | `GET /api/v1/health` (no auth) |
 | Local dev backend | `http://localhost:8000/api/v1` (see the README: `uvicorn app.main:app --reload`) |
 
-- **CORS**: the backend allows the origins in its `CORS_ORIGINS` setting. During development it is `["*"]`. For production, tell the owner your frontend origin (e.g. `https://<frontend-host>.<tailnet>.ts.net`). Auth uses a Bearer header, not cookies, so no credentials mode is needed.
+- **CORS**: the test backend currently allows only `https://noisy-unit-3440.liamchudev.workers.dev` (the deployed frontend). Local dev origins such as `http://localhost:5173` are blocked; ask the owner to add one if needed. In general the backend allows the origins in its `CORS_ORIGINS` setting. During development it is `["*"]`. For production, tell the owner your frontend origin (e.g. `https://<frontend-host>.<tailnet>.ts.net`). Auth uses a Bearer header, not cookies, so no credentials mode is needed.
 - **Every device that opens the app must be on the tailnet** (phones too, via the Tailscale app), because the browser calls the API directly. The alternative is a frontend server that proxies `/api` to the backend; then only that server needs to reach the API, but the users still reach the frontend over the tailnet.
 - HTTPS from `tailscale serve` also makes PWA install and camera access work on phones.
 

@@ -125,6 +125,17 @@ HOST=$(tailscale ip -4) scripts/start.sh   # 会重建数据库，并按 .env �
 
 ---
 
+## 跨域（CORS）
+
+`.env` 里的 `CORS_ORIGINS` 决定哪些前端域名可以调用 API，目前只允许 `https://noisy-unit-3440.liamchudev.workers.dev`。
+要加一个域名，比如本地开发用的 `http://localhost:5173`，就写成 JSON 列表：
+
+```
+CORS_ORIGINS=["https://noisy-unit-3440.liamchudev.workers.dev","http://localhost:5173"]
+```
+
+改完要重启后端才生效：`scripts/stop.sh && HOST=$(tailscale ip -4) scripts/start.sh`。Swagger 文档页不受这个设置影响。
+
 ## 撤掉公网地址（测试结束后）
 
 公网地址是临时加的，涉及三处配置，改之前的版本都有备份（文件名带 `bak-pre-billmgt-` 前缀）：
